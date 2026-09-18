@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Offer;
 use App\Models\Supplier;
 use App\Models\SupplierOffer;
+use App\Models\User;
 use App\Models\Watch;
 use App\Services\OfferRecorder;
 use App\Services\Providers\CsvFeedProvider;
@@ -19,9 +20,21 @@ class ScannerTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_nonlocal_requests_are_blocked(): void
+    protected function setUp(): void
     {
-        $this->withServerVariables(['REMOTE_ADDR' => '192.168.1.10'])->get('/')->assertForbidden();
+        parent::setUp();
+        $this->actingAs(User::factory()->create());
+    }
+
+    public function test_public_home_is_available_outside_localhost(): void
+    {
+        auth()->logout();
+
+        $this->withServerVariables(['REMOTE_ADDR' => '192.168.1.10'])->get('/')
+            ->assertOk()
+            ->assertSee('PRICE COMPARISON SERVICE')
+            ->assertSee('NOVELION S.R.L.')
+            ->assertSee('sursele comerciale sunt în curs de conectare');
     }
 
     public function test_punctuation_query_does_not_match_everything(): void
@@ -61,15 +74,15 @@ class ScannerTest extends TestCase
 
     public function test_home_is_honest_without_sources(): void
     {
-        $this->get('/')->assertOk()->assertSee('Neactivat')->assertSee('Nu sunt afișate date inventate');
-        $this->get('/?q=test')->assertOk()->assertSee('Nu există oferte');
+        $this->get('/')->assertOk()->assertSee('Neactivat')->assertSee('Catalogul comercial nu este încă populat');
+        $this->get('/?q=test')->assertOk()->assertSee('Nu există încă oferte autorizate');
     }
 
     public function test_exact_and_similar_are_separate_and_unknown_shipping_is_not_zero(): void
     {
         $this->offer();
         $this->offer(['external_id' => '2', 'price' => 5000, 'shipping' => null]);
-        $this->get('/?q=4006381333931')->assertOk()->assertSee('Același GTIN')->assertSee('110,00 lei')->assertSee('Necunoscută');
+        $this->get('/?q=4006381333931')->assertOk()->assertSee('GTIN identic')->assertSee('110,00 lei')->assertSee('Necunoscută');
         $this->get('/?q=Test')->assertOk()->assertSee('Similar')->assertDontSee('Cel mai mic total confirmat');
     }
 
@@ -237,10 +250,12 @@ class ScannerTest extends TestCase
         $this->assertNotNull($candidate->fresh()->canonical_product_id);
     }
 
-    public function test_nonlocal_mutation_is_blocked(): void
+    public function test_unauthenticated_internal_mutation_redirects_to_login(): void
     {
         $offer = $this->offer();
-        $this->withServerVariables(['REMOTE_ADDR' => '192.168.1.10'])->post("/offers/{$offer->id}/canonical-product", ['name' => 'Blocked'])->assertForbidden();
+        auth()->logout();
+
+        $this->post("/offers/{$offer->id}/canonical-product", ['name' => 'Blocked'])->assertRedirect('/login');
         $this->assertDatabaseCount('canonical_products', 0);
     }
 }

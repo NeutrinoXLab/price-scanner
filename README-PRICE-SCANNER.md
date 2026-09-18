@@ -4,6 +4,10 @@ Modelul separă produse canonice, oferte comerciale, comercianți normalizați �
 
 Sunt păstrate RON, EUR, USD și PLN în valoarea originală. Conversia este dezactivată până când există un curs cu furnizor și timestamp. Documentație: [arhitectură](docs/ARCHITECTURE.md), [matching](docs/MATCHING.md), [surse reale](docs/REAL_DATA_SOURCES.md).
 
+## Publicare în producție
+
+Pagina principală, căutarea, ofertele și produsele canonice sunt publice. Sincronizarea surselor, importurile, exportul, uploadul OCR, alertele, urmărirea și review-ul manual necesită autentificare. Nu există signup public. Instrucțiunile complete pentru `scan.novelions.ro`, inclusiv SQLite, permisiuni, build, health check și rollback, sunt în [PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md).
+
 Aplicație Laravel 13.31.0, PHP 8.3.30, Blade fără build JavaScript, SQLite, cache și coadă în baza de date. Proiect nou, separat de Novelion și Tender/SEAP Scanner. Nu folosește bazele lor de date sau codul lor.
 
 ## Pornire pe Windows / Laragon

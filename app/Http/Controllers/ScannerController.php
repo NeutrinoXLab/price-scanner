@@ -10,6 +10,7 @@ use App\Services\Images\LocalOcr;
 use App\Services\Matcher;
 use App\Services\Providers\CsvFeedProvider;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class ScannerController extends Controller
@@ -31,16 +32,23 @@ class ScannerController extends Controller
         $eligible = collect($results)->filter(fn ($r) => $r['match']['kind'] === 'exact' && $r['offer']->availability === 'in_stock' && $r['offer']->total !== null && $r['offer']->checked_at->gt(now()->subHours(24)));
         $minimum = $eligible->min(fn ($r) => $r['offer']->total);
 
-        return view('scanner', ['q' => $q, 'results' => array_slice($results, 0, 100), 'count' => count($results), 'minimum' => $minimum, 'states' => DB::table('source_states')->get()->keyBy('source'), 'watches' => Watch::with('offer')->get(), 'alerts' => DB::table('price_alerts')->join('watches', 'watches.id', '=', 'price_alerts.watch_id')->join('offers', 'offers.id', '=', 'watches.offer_id')->select('price_alerts.*', 'offers.title')->orderByDesc('price_alerts.id')->limit(30)->get()]);
+        $administration = Auth::check() ? [
+            'states' => DB::table('source_states')->get()->keyBy('source'),
+            'watches' => Watch::with('offer')->get(),
+            'alerts' => DB::table('price_alerts')->join('watches', 'watches.id', '=', 'price_alerts.watch_id')->join('offers', 'offers.id', '=', 'watches.offer_id')->select('price_alerts.*', 'offers.title')->orderByDesc('price_alerts.id')->limit(30)->get(),
+        ] : ['states' => collect(), 'watches' => collect(), 'alerts' => collect()];
+
+        return view('scanner', $administration + ['q' => $q, 'results' => array_slice($results, 0, 100), 'count' => count($results), 'minimum' => $minimum]);
     }
 
     public function sync()
     {
-        foreach (array_keys(config('scanner.sources')) as $key) {
+        $configured = collect(config('scanner.sources'))->filter(fn (array $source): bool => (bool) $source['approved'] && filled($source['url']));
+        foreach ($configured->keys() as $key) {
             SyncSource::dispatch($key);
         }
 
-        return back()->with('message', 'Verificările au fost puse în coadă. Workerul trebuie să ruleze. Reîncarcă pagina pentru status.');
+        return back()->with('message', $configured->isEmpty() ? 'Nu există surse aprobate și configurate.' : 'Verificările au fost puse în coadă.');
     }
 
     public function offer(Offer $offer)
