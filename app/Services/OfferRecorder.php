@@ -15,6 +15,7 @@ class OfferRecorder
     public function record(string $source, array $data): Offer
     {
         return DB::transaction(function () use ($source, $data) {
+            unset($data['source']);
             $merchant = Merchant::firstOrCreate(
                 ['normalized_name' => $this->normalizer->normalize($data['seller'])],
                 ['name' => $data['seller'], 'country' => $data['country'] ?? 'RO']

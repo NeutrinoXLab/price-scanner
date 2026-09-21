@@ -40,7 +40,7 @@ class ScannerTest extends TestCase
     public function test_punctuation_query_does_not_match_everything(): void
     {
         $this->offer();
-        $this->get('/?q=!!!')->assertOk()->assertSee('0 rezultate');
+        $this->get('/?q=!!!')->assertOk()->assertSee('0 oferte');
     }
 
     public function test_import_requires_approval_and_records_provenance(): void
@@ -74,15 +74,15 @@ class ScannerTest extends TestCase
 
     public function test_home_is_honest_without_sources(): void
     {
-        $this->get('/')->assertOk()->assertSee('Neactivat')->assertSee('Catalogul comercial nu este încă populat');
-        $this->get('/?q=test')->assertOk()->assertSee('Nu există încă oferte autorizate');
+        $this->get('/')->assertOk()->assertSee('Neactivat')->assertSee('Caută în baza locală');
+        $this->get('/?q=test')->assertOk()->assertSee('Nu există oferte potrivite în baza locală');
     }
 
     public function test_exact_and_similar_are_separate_and_unknown_shipping_is_not_zero(): void
     {
         $this->offer();
         $this->offer(['external_id' => '2', 'price' => 5000, 'shipping' => null]);
-        $this->get('/?q=4006381333931')->assertOk()->assertSee('GTIN identic')->assertSee('110,00 lei')->assertSee('Necunoscută');
+        $this->get('/?q=4006381333931')->assertOk()->assertSee('Exact · 100%')->assertSee('10,00 RON')->assertSee('necunoscută');
         $this->get('/?q=Test')->assertOk()->assertSee('Similar')->assertDontSee('Cel mai mic total confirmat');
     }
 

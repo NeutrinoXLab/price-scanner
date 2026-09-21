@@ -54,6 +54,22 @@ class CsvFeedProvider implements OfferProvider
 
     public function parse(string $csv): array
     {
+        $report = $this->preview($csv, 'feed');
+        if ($report['errors']) {
+            throw new RuntimeException($report['errors'][0]['message']);
+        }
+        if (! $report['rows']) {
+            throw new RuntimeException('Empty catalog requires review');
+        }
+
+        return $report['rows'];
+    }
+
+    /**
+     * @return array{rows: array<int, array<string, mixed>>, errors: array<int, array{line: int, message: string}>}
+     */
+    public function preview(string $csv, ?string $defaultSource = null): array
+    {
         if (strlen($csv) > 10485760) {
             throw new RuntimeException('Feed too large');
         }
@@ -66,54 +82,160 @@ class CsvFeedProvider implements OfferProvider
                 throw new RuntimeException('Missing CSV header');
             }
             $headers[0] = ltrim($headers[0], "\xEF\xBB\xBF");
-            if (array_diff(['external_id', 'seller', 'title', 'url', 'price', 'shipping', 'currency', 'availability', 'ean', 'model', 'sku'], $headers)) {
+            $headers = array_map(fn (string $header): string => strtolower(trim($header)), $headers);
+            if (array_diff(['seller', 'title', 'url', 'price', 'currency'], $headers)) {
                 throw new RuntimeException('Unsupported feed schema');
             }
             $offers = [];
+            $errors = [];
             $seen = [];
+            $line = 1;
             while (($row = fgetcsv($stream, 0, ',', '"', '')) !== false) {
+                $line++;
                 if ($row === [null]) {
                     continue;
                 }
-                if (count($row) !== count($headers)) {
-                    throw new RuntimeException('Invalid CSV row');
-                }
-                $r = array_combine($headers, $row);
-                foreach (['external_id', 'seller', 'title'] as $field) {
-                    if (trim($r[$field]) === '' || mb_strlen($r[$field]) > 255) {
-                        throw new RuntimeException('Missing or long field');
+                try {
+                    if (count($row) !== count($headers)) {
+                        throw new RuntimeException('Număr de coloane invalid.');
                     }
+                    $record = array_combine($headers, $row);
+                    $offers[] = $this->normalizeRow($record, $defaultSource, $seen);
+                    if (count($offers) > 30000) {
+                        throw new RuntimeException('Prea multe oferte.');
+                    }
+                } catch (RuntimeException $exception) {
+                    $errors[] = ['line' => $line, 'message' => $exception->getMessage()];
                 }
-                if (! filter_var($r['url'], FILTER_VALIDATE_URL) || ! in_array(parse_url($r['url'], PHP_URL_SCHEME), ['http', 'https'])) {
-                    throw new RuntimeException('Invalid product URL');
-                }
-                $currency = strtoupper($r['currency']);
-                if (! in_array($currency, config('scanner.currencies'), true) || ! in_array($r['availability'], ['in_stock', 'out_of_stock', 'preorder', 'unknown'])) {
-                    throw new RuntimeException('Unsupported currency or availability');
-                }
-                $key = $r['external_id'].'|'.$r['seller'];
-                if (isset($seen[$key])) {
-                    throw new RuntimeException('Duplicate offer');
-                }$seen[$key] = true;
-                $offers[] = array_intersect_key($r, array_flip(['external_id', 'seller', 'title', 'url', 'availability'])) + [
-                    'currency' => $currency,
-                    'price' => self::money($r['price']) ?? throw new RuntimeException('Missing price'), 'shipping' => self::money($r['shipping']),
-                    'ean' => $r['ean'] ?: null, 'model' => $r['model'] ?: null, 'sku' => $r['sku'] ?: null,
-                    'old_price' => isset($r['old_price']) ? self::money($r['old_price']) : null,
-                    'brand' => $r['brand'] ?? null, 'mpn' => $r['mpn'] ?? null,
-                    'country' => strtoupper($r['country'] ?? 'RO'), 'raw_metadata' => $r,
-                ];
-                if (count($offers) > 30000) {
-                    throw new RuntimeException('Too many offers');
-                }
-            }
-            if (! $offers) {
-                throw new RuntimeException('Empty catalog requires review');
             }
 
-            return $offers;
+            return ['rows' => $offers, 'errors' => $errors];
         } finally {
             fclose($stream);
         }
+    }
+
+    /**
+     * @param  array<string, string>  $row
+     * @param  array<string, bool>  $seen
+     * @return array<string, mixed>
+     */
+    private function normalizeRow(array $row, ?string $defaultSource, array &$seen): array
+    {
+        foreach (['seller', 'title'] as $field) {
+            if (trim($row[$field] ?? '') === '' || mb_strlen($row[$field]) > 255) {
+                throw new RuntimeException("Câmp obligatoriu lipsă sau prea lung: {$field}.");
+            }
+        }
+        $url = trim($row['url'] ?? '');
+        if (mb_strlen($url) > 2048 || ! filter_var($url, FILTER_VALIDATE_URL) || ! in_array(parse_url($url, PHP_URL_SCHEME), ['http', 'https'], true)) {
+            throw new RuntimeException('URL produs invalid.');
+        }
+        $currency = strtoupper(trim($row['currency'] ?? ''));
+        $availability = trim($row['availability'] ?? '') ?: 'unknown';
+        if (! in_array($currency, config('scanner.currencies'), true) || ! in_array($availability, ['in_stock', 'out_of_stock', 'preorder', 'unknown'], true)) {
+            throw new RuntimeException('Monedă sau disponibilitate nesuportată.');
+        }
+        $source = strtolower(trim($row['source'] ?? $row['provider'] ?? $defaultSource ?? ''));
+        if (! preg_match('/^[a-z0-9_-]{1,60}$/', $source)) {
+            throw new RuntimeException('Sursă invalidă.');
+        }
+        $externalId = trim($row['external_id'] ?? '') ?: hash('sha256', $url);
+        if (mb_strlen($externalId) > 255) {
+            throw new RuntimeException('Identificator extern prea lung.');
+        }
+        $key = $source.'|'.$externalId.'|'.trim($row['seller']);
+        if (isset($seen[$key])) {
+            throw new RuntimeException('Ofertă duplicată în fișier.');
+        }
+        $seen[$key] = true;
+        $country = strtoupper(trim($row['country'] ?? $row['merchant_country'] ?? 'RO'));
+        if (! preg_match('/^[A-Z]{2}$/', $country)) {
+            throw new RuntimeException('Țară invalidă; folosește cod ISO din două litere.');
+        }
+        $channel = strtoupper(trim($row['channel'] ?? $row['market_type'] ?? 'B2C'));
+        if (! in_array($channel, ['B2B', 'B2C'], true)) {
+            throw new RuntimeException('Tipul comercial trebuie să fie B2B sau B2C.');
+        }
+
+        return [
+            'source' => $source, 'external_id' => $externalId, 'seller' => trim($row['seller']),
+            'title' => trim($row['title']), 'description' => $this->nullable($row['description'] ?? null, 5000),
+            'category' => $this->nullable($row['category'] ?? null, 100), 'url' => $url,
+            'image_url' => $this->optionalUrl($row['image_url'] ?? null),
+            'price' => self::money($row['price']) ?? throw new RuntimeException('Preț lipsă.'),
+            'shipping' => self::money($row['shipping'] ?? ''), 'currency' => $currency,
+            'availability' => $availability, 'ean' => $this->nullable($row['ean'] ?? $row['gtin'] ?? null, 32),
+            'model' => $this->nullable($row['model'] ?? null, 100), 'mpn' => $this->nullable($row['mpn'] ?? null, 100),
+            'sku' => $this->nullable($row['sku'] ?? null, 100), 'brand' => $this->nullable($row['brand'] ?? null, 100),
+            'country' => $country, 'channel' => $channel,
+            'vat_included' => $this->optionalBoolean($row['vat_included'] ?? null),
+            'moq' => $this->optionalPositiveInteger($row['moq'] ?? null, 'MOQ'),
+            'pack_quantity' => $this->optionalPositiveInteger($row['pack_quantity'] ?? null, 'Cantitate pachet'),
+            'notes' => $this->nullable($row['notes'] ?? null, 5000),
+            'source_updated_at' => $this->optionalTimestamp($row['source_updated_at'] ?? $row['updated_at'] ?? null),
+            'old_price' => isset($row['old_price']) ? self::money($row['old_price']) : null,
+            'raw_metadata' => $row,
+        ];
+    }
+
+    private function nullable(?string $value, ?int $maximumLength = null): ?string
+    {
+        $value = trim((string) $value);
+        if ($maximumLength !== null && mb_strlen($value) > $maximumLength) {
+            throw new RuntimeException('Câmp text prea lung.');
+        }
+
+        return $value === '' ? null : $value;
+    }
+
+    private function optionalUrl(?string $value): ?string
+    {
+        $value = $this->nullable($value, 2048);
+        if ($value !== null && (! filter_var($value, FILTER_VALIDATE_URL) || ! in_array(parse_url($value, PHP_URL_SCHEME), ['http', 'https'], true))) {
+            throw new RuntimeException('URL imagine invalid.');
+        }
+
+        return $value;
+    }
+
+    private function optionalBoolean(?string $value): ?bool
+    {
+        $value = strtolower(trim((string) $value));
+        if ($value === '') {
+            return null;
+        }
+        if (! in_array($value, ['1', '0', 'true', 'false', 'yes', 'no', 'da', 'nu'], true)) {
+            throw new RuntimeException('Valoare TVA invalidă.');
+        }
+
+        return in_array($value, ['1', 'true', 'yes', 'da'], true);
+    }
+
+    private function optionalPositiveInteger(?string $value, string $label): ?int
+    {
+        $value = trim((string) $value);
+        if ($value === '') {
+            return null;
+        }
+        if (! ctype_digit($value) || (int) $value < 1 || (int) $value > 1000000) {
+            throw new RuntimeException("{$label} invalidă.");
+        }
+
+        return (int) $value;
+    }
+
+    private function optionalTimestamp(?string $value): ?string
+    {
+        $value = $this->nullable($value);
+        if ($value === null) {
+            return null;
+        }
+        $timestamp = strtotime($value);
+        if ($timestamp === false) {
+            throw new RuntimeException('Data sursei este invalidă.');
+        }
+
+        return date('Y-m-d H:i:s', $timestamp);
     }
 }

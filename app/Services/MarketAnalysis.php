@@ -8,7 +8,8 @@ class MarketAnalysis
 {
     public function summarize(Collection $offers, string $country = 'RO'): array
     {
-        $eligible = $offers->filter(fn ($offer) => $offer->country === $country && $offer->availability === 'in_stock');
+        $available = $offers->filter(fn ($offer) => $offer->country === $country && $offer->availability === 'in_stock');
+        $eligible = $available->where('currency', 'RON');
         $prices = $eligible->map(fn ($offer) => $offer->total ?? $offer->price)->sort()->values();
         $merchants = $eligible->map(fn ($offer) => $offer->merchant_id ? 'merchant:'.$offer->merchant_id : 'seller:'.app(ProductNormalizer::class)->normalize($offer->seller))->unique();
 
@@ -18,6 +19,7 @@ class MarketAnalysis
             'average' => $prices->count() ? (int) round($prices->average()) : null,
             'median' => $this->median($prices), 'first_seen' => $offers->min('created_at'),
             'last_seen' => $offers->max('checked_at'),
+            'currencies' => $available->groupBy('currency')->map->count()->all(),
         ];
     }
 

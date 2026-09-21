@@ -47,6 +47,19 @@ class ProductDomainTest extends TestCase
         $this->assertSame(20000, $analysis['maximum']);
     }
 
+    public function test_market_never_aggregates_different_currencies_as_the_same_money(): void
+    {
+        $offers = collect([
+            new Offer(['seller' => 'Seller RON', 'price' => 10000, 'shipping' => 0, 'currency' => 'RON', 'country' => 'RO', 'availability' => 'in_stock']),
+            new Offer(['seller' => 'Seller EUR', 'price' => 100, 'shipping' => 0, 'currency' => 'EUR', 'country' => 'RO', 'availability' => 'in_stock']),
+        ]);
+
+        $analysis = app(MarketAnalysis::class)->summarize($offers);
+
+        $this->assertSame(10000, $analysis['minimum']);
+        $this->assertSame(['RON' => 1, 'EUR' => 1], $analysis['currencies']);
+    }
+
     public function test_opportunity_calculation_is_transparent(): void
     {
         $result = app(OpportunityCalculator::class)->calculate(['purchase_price' => 10000, 'quantity' => 10, 'inbound_shipping' => 10000, 'customs_cost' => 5000, 'other_costs' => 5000, 'outbound_shipping' => 1500, 'selling_price' => 20000]);

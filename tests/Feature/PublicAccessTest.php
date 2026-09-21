@@ -46,14 +46,13 @@ class PublicAccessTest extends TestCase
         $this->assertAuthenticatedAs($user);
     }
 
-    public function test_public_offer_hides_manual_review_and_watch_forms(): void
+    public function test_commercial_detail_pages_are_private(): void
     {
         $offer = $this->offer();
 
-        $this->get("/offers/{$offer->id}")
-            ->assertOk()
-            ->assertDontSee('Creează produs canonic')
-            ->assertDontSee('Urmărește costul total');
+        $this->get("/offers/{$offer->id}")->assertRedirect('/login');
+        $this->get('/products/999')->assertRedirect('/login');
+        $this->get('/?q=Produs')->assertOk()->assertDontSee('Seller autorizat');
     }
 
     private function offer(): Offer

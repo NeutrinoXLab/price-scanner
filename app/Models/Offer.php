@@ -8,11 +8,17 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Offer extends Model
 {
-    protected $guarded = [];
+    protected $fillable = [
+        'canonical_product_id', 'merchant_id', 'source', 'external_id', 'seller', 'title', 'description',
+        'category', 'normalized_title', 'url', 'image_url', 'ean', 'brand', 'model', 'mpn', 'sku',
+        'price', 'old_price', 'shipping', 'currency', 'country', 'channel', 'vat_included', 'moq',
+        'pack_quantity', 'availability', 'attributes', 'raw_metadata', 'notes', 'access_method',
+        'source_updated_at', 'checked_at',
+    ];
 
     protected function casts(): array
     {
-        return ['checked_at' => 'datetime', 'price' => 'integer', 'old_price' => 'integer', 'shipping' => 'integer', 'attributes' => 'array', 'raw_metadata' => 'array'];
+        return ['checked_at' => 'datetime', 'source_updated_at' => 'datetime', 'price' => 'integer', 'old_price' => 'integer', 'shipping' => 'integer', 'vat_included' => 'boolean', 'moq' => 'integer', 'pack_quantity' => 'integer', 'attributes' => 'array', 'raw_metadata' => 'array'];
     }
 
     public function points()
